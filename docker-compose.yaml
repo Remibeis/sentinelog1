@@ -1,17 +1,11 @@
-version: '3.9'
-
-# ══════════════════════════════════════════════════════════════════════════════
-#  SentineLog SIEM — Stack Python
+# ══════════════════════════════════════════════════════════════════════
+#  SentineLog PRO — Docker Compose Production
 #  Déploiement: docker compose up -d --build
-#  Dashboard:   http://localhost:8080
-#  API:         http://localhost:3000
-#  Kibana:      http://localhost:5601
-#  ES:          http://localhost:9200
-# ══════════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════
 
 services:
 
-  # ── Elasticsearch ──────────────────────────────────────────────────────────
+  # ── Elasticsearch ────────────────────────────────────────────────────
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.12.0
     container_name: sentinelog-elasticsearch
@@ -19,29 +13,36 @@ services:
     environment:
       - discovery.type=single-node
       - xpack.security.enabled=false
-      - ES_JAVA_OPTS=-Xms1g -Xmx1g
+      - ES_JAVA_OPTS=-Xms2g -Xmx2g
       - bootstrap.memory_lock=true
+      - cluster.name=sentinelog-cluster
+      - node.name=sentinelog-node-1
     ulimits:
       memlock:
         soft: -1
         hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
     ports:
       - "9200:9200"
     volumes:
       - es-data:/usr/share/elasticsearch/data
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health || exit 1"]
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health?wait_for_status=yellow || exit 1"]
       interval: 15s
-      timeout: 5s
-      retries: 10
-      start_period: 30s
+      timeout: 10s
+      retries: 15
+      start_period: 60s
     networks:
       - sentinelog-net
+    restart: unless-stopped
 
-  # ── Kibana ─────────────────────────────────────────────────────────────────
+  # ── Kibana ────────────────────────────────────────────────────────────
   kibana:
     image: docker.elastic.co/kibana/kibana:8.12.0
     container_name: sentinelog-kibana
+    hostname: kibana
     depends_on:
       elasticsearch:
         condition: service_healthy
@@ -49,13 +50,25 @@ services:
       - "5601:5601"
     environment:
       - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+      - SERVER_NAME=sentinelog-kibana
+      - SERVER_BASEPATH=
+      - XPACK_SECURITY_ENABLED=false
+      - XPACK_ENCRYPTEDSAVEDOBJECTS_ENCRYPTIONKEY=sentinelog-kibana-secret-key-32chars
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:5601/api/status | grep -q 'available' || exit 1"]
+      interval: 20s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
     networks:
       - sentinelog-net
+    restart: unless-stopped
 
-  # ── Fluent Bit : collecte logs ─────────────────────────────────────────────
+  # ── Fluent Bit ────────────────────────────────────────────────────────
   fluent-bit:
     image: fluent/fluent-bit:2.2.3
     container_name: sentinelog-fluent-bit
+    hostname: fluent-bit
     depends_on:
       elasticsearch:
         condition: service_healthy
@@ -63,43 +76,57 @@ services:
       - ./collector/fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf:ro
       - ./collector/parsers.conf:/fluent-bit/etc/parsers.conf:ro
       - ./collector/state:/fluent-bit/state
-      # Monte les logs de l'hôte Windows Server (adapter les chemins si besoin)
+      # Décommenter pour collecter les logs de l'hôte Windows Server :
       # - C:/Windows/System32/winevt/Logs:/var/log/winevt:ro
     ports:
-      - "514:514/udp"
-      - "5514:5514/tcp"
+      - "514:514/udp"     # Syslog UDP standard
+      - "5514:5514/tcp"   # Syslog TCP alternatif
+      - "2020:2020"       # Fluent Bit monitoring HTTP
     networks:
       - sentinelog-net
+    restart: unless-stopped
 
-  # ── Backend API Python/FastAPI ─────────────────────────────────────────────
+  # ── Backend API Python/FastAPI ────────────────────────────────────────
   backend-api:
     build:
       context: ./backend-api
       dockerfile: Dockerfile
     container_name: sentinelog-backend
+    hostname: backend-api
     depends_on:
       elasticsearch:
         condition: service_healthy
     environment:
       - ES_URL=http://elasticsearch:9200
       - ES_INDEX=sentinelog-logs
-      - SYSLOG_PORT=5140
       - API_PORT=3000
+      - SYSLOG_PORT=5140
     ports:
       - "3000:3000"
-      - "5140:5140/udp"    # Syslog UDP direct vers l'API (port alternatif, non-root)
+      - "5140:5140/udp"   # Syslog UDP direct API
+    volumes:
+      - ./logs:/app/logs
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:3000/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     networks:
       - sentinelog-net
     restart: unless-stopped
 
-  # ── Data Processor Python ─────────────────────────────────────────────────
+  # ── Data Processor Python ─────────────────────────────────────────────
   data-processor:
     build:
       context: ./data-processor
       dockerfile: Dockerfile
     container_name: sentinelog-processor
+    hostname: data-processor
     depends_on:
       elasticsearch:
+        condition: service_healthy
+      backend-api:
         condition: service_healthy
     environment:
       - ES_URL=http://elasticsearch:9200
@@ -110,19 +137,35 @@ services:
       - sentinelog-net
     restart: unless-stopped
 
-  # ── Frontend Dashboard ────────────────────────────────────────────────────
+  # ── Frontend Dashboard ─────────────────────────────────────────────────
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
     container_name: sentinelog-frontend
+    hostname: frontend
     depends_on:
-      - backend-api
+      backend-api:
+        condition: service_healthy
     ports:
       - "8080:80"
     networks:
       - sentinelog-net
     restart: unless-stopped
+
+  # ── Init Kibana (one-shot) ─────────────────────────────────────────────
+  kibana-init:
+    image: python:3.12-slim
+    container_name: sentinelog-kibana-init
+    depends_on:
+      kibana:
+        condition: service_healthy
+    volumes:
+      - ./kibana:/app
+    command: python /app/init_kibana.py
+    networks:
+      - sentinelog-net
+    restart: "no"
 
 volumes:
   es-data:
@@ -131,3 +174,6 @@ volumes:
 networks:
   sentinelog-net:
     driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

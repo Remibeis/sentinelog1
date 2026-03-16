@@ -1,0 +1,123 @@
+# ══════════════════════════════════════════════════════════════════
+#  SentineLog PRO — Winlogbeat Configuration
+#  Collecte les Windows Event Logs et les envoie vers le SIEM
+#  Installation : sur chaque machine Windows à surveiller
+# ══════════════════════════════════════════════════════════════════
+
+winlogbeat.event_logs:
+
+  # ── Sécurité (le plus important pour un SIEM) ──────────────────
+  - name: Security
+    ignore_older: 72h
+    event_id:
+      # Authentification
+      - 4624   # Connexion réussie
+      - 4625   # Echec de connexion
+      - 4634   # Déconnexion
+      - 4648   # Connexion avec credentials explicites (runas)
+      - 4672   # Privilèges spéciaux assignés
+      - 4720   # Création de compte utilisateur
+      - 4722   # Activation de compte utilisateur
+      - 4723   # Changement de mot de passe
+      - 4724   # Reset de mot de passe par admin
+      - 4725   # Désactivation de compte
+      - 4726   # Suppression de compte
+      - 4728   # Ajout membre groupe sécurité global
+      - 4732   # Ajout membre groupe sécurité local
+      - 4740   # Compte verrouillé (brute-force)
+      - 4756   # Ajout membre groupe universel
+      # Processus
+      - 4688   # Création de processus
+      - 4689   # Fin de processus
+      # Politique
+      - 4719   # Changement politique d'audit
+      - 4739   # Changement politique de domaine
+      # Réseau
+      - 5140   # Accès partage réseau
+      - 5145   # Vérification accès partage réseau
+      # Firewall Windows
+      - 5156   # Connexion réseau autorisée
+      - 5157   # Connexion réseau bloquée
+      - 5158   # Liaison port autorisée
+      - 5159   # Liaison port bloquée
+
+  # ── Système ────────────────────────────────────────────────────
+  - name: System
+    ignore_older: 72h
+    event_id:
+      - 7034   # Service crashé
+      - 7035   # Service démarré/arrêté
+      - 7036   # Changement état service
+      - 7040   # Changement type démarrage service
+      - 7045   # Nouveau service installé
+      - 6005   # Démarrage Windows (EventLog started)
+      - 6006   # Arrêt Windows (EventLog stopped)
+      - 6008   # Arrêt brutal/crash
+      - 1074   # Redémarrage/arrêt initié
+      - 41     # Redémarrage inattendu (kernel power)
+
+  # ── Application ────────────────────────────────────────────────
+  - name: Application
+    ignore_older: 48h
+    level: error, critical, warning
+
+  # ── PowerShell (détection attaques) ───────────────────────────
+  - name: Microsoft-Windows-PowerShell/Operational
+    ignore_older: 24h
+    event_id:
+      - 4103   # Pipeline execution
+      - 4104   # Script block logging (CRITIQUE pour détection)
+      - 4105   # Start command
+      - 4106   # Stop command
+
+  # ── Windows Defender ───────────────────────────────────────────
+  - name: Microsoft-Windows-Windows Defender/Operational
+    ignore_older: 72h
+    event_id:
+      - 1006   # Malware détecté
+      - 1007   # Action sur malware
+      - 1008   # Echec action sur malware
+      - 1116   # Malware détecté (antivirus)
+      - 1117   # Action prise contre malware
+      - 1118   # Echec action antivirus
+      - 5001   # Protection temps réel désactivée (ALERTE)
+      - 5010   # Analyse désactivée
+
+  # ── Sysmon (si installé — recommandé fortement) ───────────────
+  - name: Microsoft-Windows-Sysmon/Operational
+    ignore_older: 24h
+
+# ── Enrichissement ─────────────────────────────────────────────
+processors:
+  - add_host_metadata:
+      when.not.contains.tags: forwarded
+  - add_fields:
+      target: ''
+      fields:
+        collector: winlogbeat
+        os_type: windows
+        log_category: windows_event
+
+# ── Output : SentineLog API ────────────────────────────────────
+output.http:
+  hosts: ["http://SENTINELOG_SERVER_IP:3000"]
+  path: "/ingest"
+  method: POST
+  headers:
+    Content-Type: "application/json"
+  # Transformer chaque event en format attendu par l'API
+  codec.format:
+    string: >-
+      {"message": "%{[winlog.message]}", "source": "winlogbeat",
+       "host": "%{[host.name]}", "event_id": "%{[winlog.event_id]}",
+       "log_category": "windows_event",
+       "timestamp": "%{[@timestamp]}"}
+
+# Logging Winlogbeat lui-même
+logging.level: info
+logging.to_files: true
+logging.files:
+  path: C:\ProgramData\winlogbeat\logs
+  name: winlogbeat
+  keepfiles: 7
+  permissions: 0640

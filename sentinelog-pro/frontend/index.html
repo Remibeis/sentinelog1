@@ -1,0 +1,1021 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SentineLog — SIEM Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Exo+2:wght@300;400;600;700&display=swap" rel="stylesheet" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <style>
+    :root {
+      --bg:         #080c10;
+      --bg2:        #0d1117;
+      --bg3:        #111820;
+      --border:     #1a2535;
+      --accent:     #00e5ff;
+      --accent2:    #ff4757;
+      --accent3:    #2ed573;
+      --warn:       #ffa502;
+      --text:       #c9d1d9;
+      --text-dim:   #586069;
+      --crit:       #ff4757;
+      --high:       #ff6b35;
+      --med:        #ffa502;
+      --low:        #2ed573;
+      --info:       #00e5ff;
+      --font-mono:  'Share Tech Mono', monospace;
+      --font-ui:    'Exo 2', sans-serif;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font-ui);
+      font-size: 14px;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* ── Scanlines overlay ── */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background: repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 2px,
+        rgba(0,229,255,0.015) 2px,
+        rgba(0,229,255,0.015) 4px
+      );
+      pointer-events: none;
+      z-index: 1000;
+    }
+
+    /* ── Header ── */
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 24px;
+      height: 56px;
+      background: var(--bg2);
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-family: var(--font-mono);
+      font-size: 18px;
+      color: var(--accent);
+      letter-spacing: 2px;
+      text-transform: uppercase;
+    }
+
+    .logo-icon {
+      width: 28px; height: 28px;
+      border: 2px solid var(--accent);
+      border-radius: 4px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 14px;
+      animation: pulse-border 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse-border {
+      0%, 100% { border-color: var(--accent); box-shadow: 0 0 8px rgba(0,229,255,.3); }
+      50%       { border-color: var(--accent); box-shadow: 0 0 20px rgba(0,229,255,.7); }
+    }
+
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .live-badge {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--accent3);
+      letter-spacing: 1px;
+    }
+
+    .live-dot {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: var(--accent3);
+      animation: blink 1.2s ease-in-out infinite;
+    }
+
+    @keyframes blink {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: .2; }
+    }
+
+    .clock {
+      font-family: var(--font-mono);
+      font-size: 13px;
+      color: var(--text-dim);
+    }
+
+    /* ── Layout ── */
+    .layout {
+      display: grid;
+      grid-template-columns: 200px 1fr;
+      min-height: calc(100vh - 56px);
+    }
+
+    /* ── Sidebar ── */
+    nav {
+      background: var(--bg2);
+      border-right: 1px solid var(--border);
+      padding: 20px 0;
+    }
+
+    .nav-section {
+      padding: 0 12px;
+      margin-bottom: 24px;
+    }
+
+    .nav-label {
+      font-size: 10px;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      padding: 0 8px;
+      margin-bottom: 6px;
+    }
+
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 9px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      color: var(--text-dim);
+      transition: all .15s ease;
+      font-size: 13px;
+      font-weight: 400;
+      border: none;
+      background: none;
+      width: 100%;
+      text-align: left;
+    }
+
+    .nav-item:hover { background: var(--bg3); color: var(--text); }
+    .nav-item.active { background: rgba(0,229,255,.08); color: var(--accent); border-left: 2px solid var(--accent); }
+
+    .nav-badge {
+      margin-left: auto;
+      background: var(--accent2);
+      color: white;
+      font-size: 10px;
+      padding: 1px 6px;
+      border-radius: 10px;
+      font-family: var(--font-mono);
+    }
+
+    /* ── Main ── */
+    main {
+      padding: 24px;
+      overflow-y: auto;
+    }
+
+    /* ── Page sections ── */
+    .page { display: none; }
+    .page.active { display: block; }
+
+    /* ── Page header ── */
+    .page-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 24px;
+    }
+
+    .page-title {
+      font-size: 20px;
+      font-weight: 700;
+      color: white;
+      letter-spacing: .5px;
+    }
+
+    .page-subtitle {
+      font-size: 12px;
+      color: var(--text-dim);
+      margin-top: 2px;
+      font-family: var(--font-mono);
+    }
+
+    /* ── Metric cards ── */
+    .metrics-grid {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    .metric-card {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 18px 20px;
+      position: relative;
+      overflow: hidden;
+      transition: border-color .2s;
+    }
+
+    .metric-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 3px;
+    }
+
+    .metric-card.crit::before { background: var(--crit); }
+    .metric-card.high::before { background: var(--high); }
+    .metric-card.med::before  { background: var(--med); }
+    .metric-card.low::before  { background: var(--low); }
+    .metric-card.total::before { background: var(--accent); }
+
+    .metric-card:hover { border-color: rgba(0,229,255,.3); }
+
+    .metric-label {
+      font-size: 11px;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      margin-bottom: 10px;
+    }
+
+    .metric-value {
+      font-family: var(--font-mono);
+      font-size: 32px;
+      font-weight: 700;
+      line-height: 1;
+    }
+
+    .metric-card.crit .metric-value { color: var(--crit); }
+    .metric-card.high .metric-value { color: var(--high); }
+    .metric-card.med  .metric-value { color: var(--med); }
+    .metric-card.low  .metric-value { color: var(--low); }
+    .metric-card.total .metric-value { color: var(--accent); }
+
+    .metric-sub {
+      font-size: 11px;
+      color: var(--text-dim);
+      margin-top: 4px;
+    }
+
+    /* ── Grid 2 cols ── */
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    .grid-3 {
+      display: grid;
+      grid-template-columns: 2fr 1fr;
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    /* ── Panel ── */
+    .panel {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    .panel-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .panel-title {
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: var(--text);
+    }
+
+    .panel-body { padding: 16px 18px; }
+
+    canvas { max-width: 100%; }
+
+    /* ── Log table ── */
+    .log-table-wrap {
+      overflow-x: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+      font-family: var(--font-mono);
+    }
+
+    thead th {
+      padding: 10px 12px;
+      text-align: left;
+      font-size: 10px;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }
+
+    tbody tr {
+      border-bottom: 1px solid rgba(26,37,53,.6);
+      transition: background .1s;
+      cursor: default;
+    }
+
+    tbody tr:hover { background: rgba(0,229,255,.04); }
+
+    td {
+      padding: 9px 12px;
+      vertical-align: middle;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 320px;
+    }
+
+    .sev-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: .5px;
+    }
+
+    .sev-CRITICAL { background: rgba(255,71,87,.2);  color: var(--crit); border: 1px solid rgba(255,71,87,.4); }
+    .sev-HIGH     { background: rgba(255,107,53,.2); color: var(--high); border: 1px solid rgba(255,107,53,.4); }
+    .sev-MEDIUM   { background: rgba(255,165,2,.2);  color: var(--med);  border: 1px solid rgba(255,165,2,.4); }
+    .sev-LOW      { background: rgba(46,213,115,.2); color: var(--low);  border: 1px solid rgba(46,213,115,.4); }
+    .sev-INFO     { background: rgba(0,229,255,.12); color: var(--info); border: 1px solid rgba(0,229,255,.3); }
+
+    .cat-badge {
+      padding: 2px 7px;
+      border-radius: 4px;
+      font-size: 10px;
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      color: var(--text-dim);
+    }
+
+    .ip-chip {
+      color: var(--accent);
+      font-family: var(--font-mono);
+    }
+
+    /* ── Filters bar ── */
+    .filters {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    .filter-select, .filter-input {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      padding: 7px 12px;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      outline: none;
+      transition: border-color .15s;
+    }
+
+    .filter-select:hover, .filter-input:hover,
+    .filter-select:focus, .filter-input:focus {
+      border-color: var(--accent);
+    }
+
+    .filter-input { min-width: 240px; }
+
+    .btn {
+      padding: 7px 16px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--bg3);
+      color: var(--text);
+      font-family: var(--font-mono);
+      font-size: 12px;
+      cursor: pointer;
+      transition: all .15s;
+    }
+
+    .btn:hover { border-color: var(--accent); color: var(--accent); }
+    .btn.primary { background: rgba(0,229,255,.12); border-color: var(--accent); color: var(--accent); }
+
+    /* ── Alert list ── */
+    .alert-item {
+      display: flex;
+      gap: 14px;
+      align-items: flex-start;
+      padding: 14px 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .alert-item:last-child { border-bottom: none; }
+
+    .alert-icon {
+      width: 32px; height: 32px;
+      border-radius: 6px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 15px;
+      flex-shrink: 0;
+    }
+
+    .alert-icon.CRITICAL { background: rgba(255,71,87,.15); }
+    .alert-icon.HIGH     { background: rgba(255,107,53,.15); }
+    .alert-icon.MEDIUM   { background: rgba(255,165,2,.15); }
+
+    .alert-meta { flex: 1; min-width: 0; }
+    .alert-title { font-size: 13px; color: white; font-weight: 600; }
+    .alert-desc  { font-size: 11px; color: var(--text-dim); margin-top: 2px; font-family: var(--font-mono); }
+
+    .alert-ts {
+      font-size: 10px;
+      color: var(--text-dim);
+      font-family: var(--font-mono);
+      white-space: nowrap;
+    }
+
+    /* ── Top IPs ── */
+    .ip-bar-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+
+    .ip-bar-label {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--accent);
+      width: 130px;
+      flex-shrink: 0;
+    }
+
+    .ip-bar-track {
+      flex: 1;
+      height: 6px;
+      background: var(--bg3);
+      border-radius: 3px;
+      overflow: hidden;
+    }
+
+    .ip-bar-fill {
+      height: 100%;
+      background: linear-gradient(90deg, var(--accent), var(--accent2));
+      border-radius: 3px;
+      transition: width .6s ease;
+    }
+
+    .ip-bar-count {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-dim);
+      width: 40px;
+      text-align: right;
+    }
+
+    /* ── Empty / loading states ── */
+    .empty-state {
+      text-align: center;
+      padding: 48px 24px;
+      color: var(--text-dim);
+    }
+
+    .empty-state .icon { font-size: 40px; margin-bottom: 12px; }
+    .empty-state .msg { font-size: 13px; }
+
+    .loading {
+      text-align: center;
+      padding: 24px;
+      color: var(--text-dim);
+      font-family: var(--font-mono);
+      font-size: 12px;
+      letter-spacing: 2px;
+    }
+
+    /* ── Scrollbar ── */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: var(--bg); }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #2a3a50; }
+
+    /* ── Animate in ── */
+    @keyframes fade-up {
+      from { opacity: 0; transform: translateY(12px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .metric-card { animation: fade-up .4s ease both; }
+    .metric-card:nth-child(2) { animation-delay: .05s; }
+    .metric-card:nth-child(3) { animation-delay: .10s; }
+    .metric-card:nth-child(4) { animation-delay: .15s; }
+    .metric-card:nth-child(5) { animation-delay: .20s; }
+
+    /* ── Responsive ── */
+    @media (max-width: 1100px) {
+      .metrics-grid { grid-template-columns: repeat(3, 1fr); }
+      .grid-2, .grid-3 { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <div class="logo-icon">⬡</div>
+    SENTINELOG
+  </div>
+  <div class="header-right">
+    <div class="live-badge">
+      <div class="live-dot"></div>
+      LIVE
+    </div>
+    <div class="clock" id="clock">--:--:--</div>
+  </div>
+</header>
+
+<div class="layout">
+  <nav>
+    <div class="nav-section">
+      <div class="nav-label">Vues</div>
+      <button class="nav-item active" data-page="dashboard">
+        <span>▦</span> Dashboard
+      </button>
+      <button class="nav-item" data-page="logs">
+        <span>≡</span> Logs
+        <span class="nav-badge" id="nb-logs">0</span>
+      </button>
+      <button class="nav-item" data-page="alerts">
+        <span>⚡</span> Alertes
+        <span class="nav-badge" id="nb-alerts">0</span>
+      </button>
+    </div>
+    <div class="nav-section">
+      <div class="nav-label">Infos</div>
+      <div style="padding: 8px 12px; font-size: 11px; color: var(--text-dim); font-family: var(--font-mono); line-height: 1.8;">
+        <div>ES: <span id="es-status" style="color:var(--warn)">…</span></div>
+        <div>Refresh: <span style="color:var(--accent)">15s</span></div>
+        <div>Index: sentinelog-logs</div>
+      </div>
+    </div>
+  </nav>
+
+  <main>
+
+    <!-- ── Dashboard ── -->
+    <div class="page active" id="page-dashboard">
+      <div class="page-header">
+        <div>
+          <div class="page-title">Vue d'ensemble</div>
+          <div class="page-subtitle" id="last-refresh">Chargement…</div>
+        </div>
+        <button class="btn primary" onclick="refreshAll()">↺ Actualiser</button>
+      </div>
+
+      <div class="metrics-grid">
+        <div class="metric-card total">
+          <div class="metric-label">Total Logs</div>
+          <div class="metric-value" id="m-total">—</div>
+          <div class="metric-sub">Tous les événements</div>
+        </div>
+        <div class="metric-card crit">
+          <div class="metric-label">CRITICAL</div>
+          <div class="metric-value" id="m-critical">—</div>
+          <div class="metric-sub">Score 90–100</div>
+        </div>
+        <div class="metric-card high">
+          <div class="metric-label">HIGH</div>
+          <div class="metric-value" id="m-high">—</div>
+          <div class="metric-sub">Score 65–89</div>
+        </div>
+        <div class="metric-card med">
+          <div class="metric-label">MEDIUM</div>
+          <div class="metric-value" id="m-medium">—</div>
+          <div class="metric-sub">Score 30–64</div>
+        </div>
+        <div class="metric-card low">
+          <div class="metric-label">LOW / INFO</div>
+          <div class="metric-value" id="m-low">—</div>
+          <div class="metric-sub">Score 0–29</div>
+        </div>
+      </div>
+
+      <div class="grid-3">
+        <div class="panel">
+          <div class="panel-head">
+            <span class="panel-title">Activité sur 24h</span>
+          </div>
+          <div class="panel-body">
+            <canvas id="chart-timeline" height="120"></canvas>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-head">
+            <span class="panel-title">Par catégorie</span>
+          </div>
+          <div class="panel-body" style="display:flex;justify-content:center;align-items:center;min-height:160px;">
+            <canvas id="chart-category" height="160" width="160"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="panel">
+          <div class="panel-head">
+            <span class="panel-title">Top IPs sources</span>
+          </div>
+          <div class="panel-body" id="top-ips-body">
+            <div class="loading">CHARGEMENT…</div>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-head">
+            <span class="panel-title">Dernières alertes</span>
+          </div>
+          <div class="panel-body" id="recent-alerts-body" style="max-height:260px;overflow-y:auto;">
+            <div class="loading">CHARGEMENT…</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Logs ── -->
+    <div class="page" id="page-logs">
+      <div class="page-header">
+        <div>
+          <div class="page-title">Journal des logs</div>
+          <div class="page-subtitle">Tous les événements collectés</div>
+        </div>
+        <button class="btn primary" onclick="loadLogs()">↺ Actualiser</button>
+      </div>
+      <div class="filters">
+        <select class="filter-select" id="f-severity" onchange="loadLogs()">
+          <option value="">Toutes criticités</option>
+          <option value="CRITICAL">CRITICAL</option>
+          <option value="HIGH">HIGH</option>
+          <option value="MEDIUM">MEDIUM</option>
+          <option value="LOW">LOW</option>
+          <option value="INFO">INFO</option>
+        </select>
+        <select class="filter-select" id="f-category" onchange="loadLogs()">
+          <option value="">Toutes catégories</option>
+          <option value="auth">Auth</option>
+          <option value="web">Web</option>
+          <option value="firewall">Firewall</option>
+          <option value="ids">IDS</option>
+          <option value="network">Réseau</option>
+          <option value="system">Système</option>
+          <option value="malware">Malware</option>
+        </select>
+        <input class="filter-input" type="text" id="f-search" placeholder="Rechercher dans les messages…" />
+        <button class="btn" onclick="loadLogs()">Filtrer</button>
+      </div>
+      <div class="panel">
+        <div class="log-table-wrap">
+          <table id="logs-table">
+            <thead>
+              <tr>
+                <th>TIMESTAMP</th>
+                <th>SÉVÉRITÉ</th>
+                <th>CATÉGORIE</th>
+                <th>IP SOURCE</th>
+                <th>USER</th>
+                <th>MESSAGE</th>
+                <th>SOURCE</th>
+              </tr>
+            </thead>
+            <tbody id="logs-tbody">
+              <tr><td colspan="7"><div class="loading">CHARGEMENT…</div></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Alertes ── -->
+    <div class="page" id="page-alerts">
+      <div class="page-header">
+        <div>
+          <div class="page-title">Alertes actives</div>
+          <div class="page-subtitle">HIGH et CRITICAL uniquement</div>
+        </div>
+        <button class="btn primary" onclick="loadAlerts()">↺ Actualiser</button>
+      </div>
+      <div class="panel">
+        <div class="log-table-wrap">
+          <table id="alerts-table">
+            <thead>
+              <tr>
+                <th>TIMESTAMP</th>
+                <th>SÉVÉRITÉ</th>
+                <th>SCORE</th>
+                <th>CATÉGORIE</th>
+                <th>IP SOURCE</th>
+                <th>RÈGLE</th>
+                <th>MESSAGE</th>
+              </tr>
+            </thead>
+            <tbody id="alerts-tbody">
+              <tr><td colspan="7"><div class="loading">CHARGEMENT…</div></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<script>
+  const API = window.location.origin.replace(/:\d+$/, ':3000');
+
+  // ── Clock ─────────────────────────────────────────────────────────────────
+  function updateClock() {
+    document.getElementById('clock').textContent =
+      new Date().toLocaleTimeString('fr-FR');
+  }
+  setInterval(updateClock, 1000);
+  updateClock();
+
+  // ── Navigation ────────────────────────────────────────────────────────────
+  document.querySelectorAll('.nav-item[data-page]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+      btn.classList.add('active');
+      document.getElementById('page-' + btn.dataset.page).classList.add('active');
+    });
+  });
+
+  // ── Charts ────────────────────────────────────────────────────────────────
+  let chartTimeline = null;
+  let chartCategory = null;
+
+  function initCharts() {
+    const ctxT = document.getElementById('chart-timeline').getContext('2d');
+    chartTimeline = new Chart(ctxT, {
+      type: 'bar',
+      data: { labels: [], datasets: [{
+        label: 'Logs/heure',
+        data: [],
+        backgroundColor: 'rgba(0,229,255,.25)',
+        borderColor: 'rgba(0,229,255,.8)',
+        borderWidth: 1,
+        borderRadius: 2,
+      }]},
+      options: {
+        responsive: true,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { ticks: { color: '#586069', maxTicksLimit: 8, font: { family: 'Share Tech Mono', size: 10 } }, grid: { color: 'rgba(26,37,53,.6)' } },
+          y: { ticks: { color: '#586069', font: { family: 'Share Tech Mono', size: 10 } }, grid: { color: 'rgba(26,37,53,.6)' } }
+        }
+      }
+    });
+
+    const ctxC = document.getElementById('chart-category').getContext('2d');
+    chartCategory = new Chart(ctxC, {
+      type: 'doughnut',
+      data: { labels: [], datasets: [{
+        data: [],
+        backgroundColor: ['#00e5ff','#ff4757','#ffa502','#2ed573','#ff6b35','#a29bfe','#fd79a8'],
+        borderWidth: 0,
+        hoverOffset: 4,
+      }]},
+      options: {
+        responsive: false,
+        plugins: {
+          legend: {
+            position: 'right',
+            labels: { color: '#c9d1d9', font: { family: 'Share Tech Mono', size: 10 }, padding: 10, boxWidth: 10 }
+          }
+        },
+        cutout: '65%',
+      }
+    });
+  }
+
+  // ── API calls ─────────────────────────────────────────────────────────────
+  async function apiFetch(path) {
+    try {
+      const r = await fetch(API + path);
+      if (!r.ok) throw new Error(r.status);
+      return await r.json();
+    } catch (e) {
+      console.error('API error:', path, e);
+      return null;
+    }
+  }
+
+  // ── Dashboard stats ───────────────────────────────────────────────────────
+  async function loadStats() {
+    const data = await apiFetch('/stats');
+    if (!data) {
+      document.getElementById('es-status').textContent = '✗ KO';
+      document.getElementById('es-status').style.color = 'var(--crit)';
+      return;
+    }
+
+    document.getElementById('es-status').textContent = '✓ OK';
+    document.getElementById('es-status').style.color = 'var(--low)';
+
+    const sev = data.by_severity || {};
+    document.getElementById('m-total').textContent   = (data.total_logs || 0).toLocaleString();
+    document.getElementById('m-critical').textContent = (sev.CRITICAL || 0).toLocaleString();
+    document.getElementById('m-high').textContent     = (sev.HIGH || 0).toLocaleString();
+    document.getElementById('m-medium').textContent   = (sev.MEDIUM || 0).toLocaleString();
+    document.getElementById('m-low').textContent      = ((sev.LOW||0) + (sev.INFO||0)).toLocaleString();
+    document.getElementById('nb-logs').textContent    = data.total_logs || 0;
+    document.getElementById('nb-alerts').textContent  = (sev.CRITICAL||0) + (sev.HIGH||0);
+
+    // Timeline chart
+    if (data.timeline?.length && chartTimeline) {
+      chartTimeline.data.labels   = data.timeline.map(t => t.time.slice(11,16));
+      chartTimeline.data.datasets[0].data = data.timeline.map(t => t.count);
+      chartTimeline.update('none');
+    }
+
+    // Category chart
+    if (data.by_category && chartCategory) {
+      const cats  = Object.keys(data.by_category);
+      const vals  = cats.map(c => data.by_category[c]);
+      chartCategory.data.labels = cats;
+      chartCategory.data.datasets[0].data = vals;
+      chartCategory.update('none');
+    }
+
+    // Top IPs
+    const ipBody = document.getElementById('top-ips-body');
+    if (!data.top_ips?.length) {
+      ipBody.innerHTML = '<div class="empty-state"><div class="icon">🌐</div><div class="msg">Aucune IP détectée</div></div>';
+    } else {
+      const max = Math.max(...data.top_ips.map(i => i.count));
+      ipBody.innerHTML = data.top_ips.slice(0, 8).map(ip => `
+        <div class="ip-bar-item">
+          <div class="ip-bar-label">${ip.ip}</div>
+          <div class="ip-bar-track">
+            <div class="ip-bar-fill" style="width:${Math.round((ip.count/max)*100)}%"></div>
+          </div>
+          <div class="ip-bar-count">${ip.count}</div>
+        </div>`).join('');
+    }
+
+    document.getElementById('last-refresh').textContent =
+      'Dernière maj: ' + new Date().toLocaleTimeString('fr-FR');
+  }
+
+  // ── Recent alerts on dashboard ────────────────────────────────────────────
+  async function loadRecentAlerts() {
+    const data = await apiFetch('/alerts?size=6');
+    const body = document.getElementById('recent-alerts-body');
+    if (!data?.alerts?.length) {
+      body.innerHTML = '<div class="empty-state"><div class="icon">✅</div><div class="msg">Aucune alerte active</div></div>';
+      return;
+    }
+    const icons = { CRITICAL: '🔴', HIGH: '🟠', MEDIUM: '🟡' };
+    body.innerHTML = data.alerts.map(a => `
+      <div class="alert-item">
+        <div class="alert-icon ${a.severity}">${icons[a.severity] || '⚪'}</div>
+        <div class="alert-meta">
+          <div class="alert-title">${a.category?.toUpperCase() || 'GENERIC'} · ${a.severity}</div>
+          <div class="alert-desc">${escHtml(a.message?.slice(0,80) || '—')}${a.message?.length > 80 ? '…' : ''}</div>
+          ${a.ip ? `<div class="alert-desc" style="color:var(--accent)">IP: ${a.ip}</div>` : ''}
+        </div>
+        <div class="alert-ts">${formatTs(a.timestamp)}</div>
+      </div>`).join('');
+  }
+
+  // ── Logs page ─────────────────────────────────────────────────────────────
+  async function loadLogs() {
+    const severity = document.getElementById('f-severity').value;
+    const category = document.getElementById('f-category').value;
+    const search   = document.getElementById('f-search').value;
+
+    let url = '/logs?size=200';
+    if (severity) url += `&severity=${severity}`;
+    if (category) url += `&category=${category}`;
+    if (search)   url += `&search=${encodeURIComponent(search)}`;
+
+    const tbody = document.getElementById('logs-tbody');
+    tbody.innerHTML = '<tr><td colspan="7"><div class="loading">CHARGEMENT…</div></td></tr>';
+
+    const data = await apiFetch(url);
+    if (!data?.logs?.length) {
+      tbody.innerHTML = '<tr><td colspan="7"><div class="empty-state"><div class="icon">📋</div><div class="msg">Aucun log trouvé</div></div></td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = data.logs.map(l => `
+      <tr>
+        <td style="color:var(--text-dim)">${formatTs(l.timestamp)}</td>
+        <td><span class="sev-badge sev-${l.severity||'INFO'}">${l.severity||'INFO'}</span></td>
+        <td><span class="cat-badge">${l.category||'—'}</span></td>
+        <td class="ip-chip">${l.ip||'—'}</td>
+        <td style="color:var(--text-dim)">${l.user||'—'}</td>
+        <td style="font-family:var(--font-mono);color:var(--text)">${escHtml((l.message||'').slice(0,120))}${(l.message||'').length>120?'…':''}</td>
+        <td style="color:var(--text-dim)">${l.source||'—'}</td>
+      </tr>`).join('');
+  }
+
+  // ── Alerts page ───────────────────────────────────────────────────────────
+  async function loadAlerts() {
+    const tbody = document.getElementById('alerts-tbody');
+    tbody.innerHTML = '<tr><td colspan="7"><div class="loading">CHARGEMENT…</div></td></tr>';
+
+    const data = await apiFetch('/alerts?size=200');
+    if (!data?.alerts?.length) {
+      tbody.innerHTML = '<tr><td colspan="7"><div class="empty-state"><div class="icon">✅</div><div class="msg">Aucune alerte — système nominal</div></div></td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = data.alerts.map(a => `
+      <tr>
+        <td style="color:var(--text-dim)">${formatTs(a.timestamp)}</td>
+        <td><span class="sev-badge sev-${a.severity}">${a.severity}</span></td>
+        <td><span style="font-family:var(--font-mono);color:${scoreColor(a.severity_score)}">${a.severity_score||'—'}</span></td>
+        <td><span class="cat-badge">${a.category||'—'}</span></td>
+        <td class="ip-chip">${a.ip||'—'}</td>
+        <td style="color:var(--text-dim);font-size:10px">${a.rule_id||'—'}</td>
+        <td style="font-family:var(--font-mono)">${escHtml((a.message||'').slice(0,100))}${(a.message||'').length>100?'…':''}</td>
+      </tr>`).join('');
+  }
+
+  // ── Utils ─────────────────────────────────────────────────────────────────
+  function formatTs(ts) {
+    if (!ts) return '—';
+    try {
+      return new Date(ts).toLocaleString('fr-FR', {
+        day: '2-digit', month: '2-digit', year: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit'
+      });
+    } catch { return ts; }
+  }
+
+  function escHtml(s) {
+    return String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  function scoreColor(score) {
+    if (score >= 90) return 'var(--crit)';
+    if (score >= 65) return 'var(--high)';
+    if (score >= 30) return 'var(--med)';
+    return 'var(--low)';
+  }
+
+  // ── Main refresh ──────────────────────────────────────────────────────────
+  async function refreshAll() {
+    await Promise.all([loadStats(), loadRecentAlerts()]);
+  }
+
+  // ── Init ──────────────────────────────────────────────────────────────────
+  initCharts();
+  refreshAll();
+  loadLogs();
+  loadAlerts();
+
+  // Auto-refresh
+  setInterval(refreshAll, 15000);
+  setInterval(loadLogs, 30000);
+  setInterval(loadAlerts, 30000);
+</script>
+</body>
+</html>

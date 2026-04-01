@@ -8,11 +8,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Installation des dépendances Python
-COPY requirements.txt .
+COPY backend-api/requirements.txt requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copie du code
-COPY main.py .
+# Copie du code et du module partagé
+COPY shared/ shared/
+COPY backend-api/main.py main.py
 
 # Health check
 HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \

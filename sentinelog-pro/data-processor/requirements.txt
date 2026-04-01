@@ -1,1 +1,2 @@
 elasticsearch==8.16.0
+redis==5.0.1

@@ -2,9 +2,12 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-COPY requirements.txt .
+# Installation des dépendances Python
+COPY data-processor/requirements.txt requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY main.py .
+# Copie du code et du module partagé
+COPY shared/ shared/
+COPY data-processor/main.py main.py
 
 CMD ["python", "main.py"]

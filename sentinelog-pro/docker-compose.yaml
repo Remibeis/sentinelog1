@@ -1,6 +1,5 @@
 # ══════════════════════════════════════════════════════════════════════
-#  SentineLog PRO — Docker Compose Production
-#  Déploiement: docker compose up -d --build
+#  SentineLog PRO — Docker Compose Production (Secured)
 # ══════════════════════════════════════════════════════════════════════
 
 services:
@@ -12,28 +11,43 @@ services:
     hostname: elasticsearch
     environment:
       - discovery.type=single-node
-      - xpack.security.enabled=false
+      - xpack.security.enabled=true
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
       - ES_JAVA_OPTS=-Xms2g -Xmx2g
       - bootstrap.memory_lock=true
       - cluster.name=sentinelog-cluster
-      - node.name=sentinelog-node-1
     ulimits:
-      memlock:
-        soft: -1
-        hard: -1
-      nofile:
-        soft: 65536
-        hard: 65536
+      memlock: { soft: -1, hard: -1 }
+      nofile: { soft: 65536, hard: 65536 }
     ports:
       - "9200:9200"
     volumes:
       - es-data:/usr/share/elasticsearch/data
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health?wait_for_status=yellow || exit 1"]
+      test: ["CMD-SHELL", "curl -u elastic:${ELASTIC_PASSWORD} -sf http://localhost:9200/_cluster/health?wait_for_status=yellow || exit 1"]
       interval: 15s
       timeout: 10s
       retries: 15
       start_period: 60s
+    networks:
+      - sentinelog-net
+    restart: unless-stopped
+
+  # ── Redis (Persistent state for correlations) ──────────────────────
+  redis:
+    image: redis:7.2-alpine
+    container_name: sentinelog-redis
+    hostname: redis
+    command: redis-server --requirepass ${REDIS_PASSWORD}
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     networks:
       - sentinelog-net
     restart: unless-stopped
@@ -44,21 +58,21 @@ services:
     container_name: sentinelog-kibana
     hostname: kibana
     depends_on:
-      elasticsearch:
-        condition: service_healthy
+      elasticsearch: { condition: service_healthy }
     ports:
       - "5601:5601"
     environment:
       - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+      - ELASTICSEARCH_USERNAME=kibana_system
+      - ELASTICSEARCH_PASSWORD=${ELASTIC_PASSWORD}
       - SERVER_NAME=sentinelog-kibana
-      - SERVER_BASEPATH=
-      - XPACK_SECURITY_ENABLED=false
-      - XPACK_ENCRYPTEDSAVEDOBJECTS_ENCRYPTIONKEY=sentinelog-kibana-secret-key-32chars
+      - XPACK_SECURITY_ENABLED=true
+      - XPACK_ENCRYPTEDSAVEDOBJECTS_ENCRYPTIONKEY=${JWT_SECRET}
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:5601/api/status | grep -q 'available' || exit 1"]
       interval: 20s
       timeout: 10s
-      retries: 10
+      retries: 20
       start_period: 60s
     networks:
       - sentinelog-net
@@ -70,18 +84,11 @@ services:
     container_name: sentinelog-fluent-bit
     hostname: fluent-bit
     depends_on:
-      elasticsearch:
-        condition: service_healthy
+      elasticsearch: { condition: service_healthy }
     volumes:
       - ./collector/fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf:ro
       - ./collector/parsers.conf:/fluent-bit/etc/parsers.conf:ro
       - ./collector/state:/fluent-bit/state
-      # Décommenter pour collecter les logs de l'hôte Windows Server :
-      # - C:/Windows/System32/winevt/Logs:/var/log/winevt:ro
-    ports:
-      - "514:514/udp"     # Syslog UDP standard
-      - "5514:5514/tcp"   # Syslog TCP alternatif
-      - "2020:2020"       # Fluent Bit monitoring HTTP
     networks:
       - sentinelog-net
     restart: unless-stopped
@@ -89,29 +96,25 @@ services:
   # ── Backend API Python/FastAPI ────────────────────────────────────────
   backend-api:
     build:
-      context: ./backend-api
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: backend-api/Dockerfile
     container_name: sentinelog-backend
     hostname: backend-api
     depends_on:
-      elasticsearch:
-        condition: service_healthy
+      elasticsearch: { condition: service_healthy }
+      redis: { condition: service_healthy }
     environment:
       - ES_URL=http://elasticsearch:9200
+      - ES_USER=elastic
+      - ES_PASSWORD=${ELASTIC_PASSWORD}
       - ES_INDEX=sentinelog-logs
+      - REDIS_URL=${REDIS_URL}
+      - JWT_SECRET=${JWT_SECRET}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
       - API_PORT=3000
-      - SYSLOG_PORT=5140
     ports:
       - "3000:3000"
-      - "5140:5140/udp"   # Syslog UDP direct API
-    volumes:
-      - ./logs:/app/logs
-    healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:3000/health || exit 1"]
-      interval: 15s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
+      - "5140:5140/udp"
     networks:
       - sentinelog-net
     restart: unless-stopped
@@ -119,20 +122,19 @@ services:
   # ── Data Processor Python ─────────────────────────────────────────────
   data-processor:
     build:
-      context: ./data-processor
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: data-processor/Dockerfile
     container_name: sentinelog-processor
     hostname: data-processor
     depends_on:
-      elasticsearch:
-        condition: service_healthy
-      backend-api:
-        condition: service_healthy
+      elasticsearch: { condition: service_healthy }
+      redis: { condition: service_healthy }
     environment:
       - ES_URL=http://elasticsearch:9200
-      - ES_INDEX=sentinelog-logs
+      - ES_USER=elastic
+      - ES_PASSWORD=${ELASTIC_PASSWORD}
+      - REDIS_URL=${REDIS_URL}
       - POLL_INTERVAL=10
-      - BATCH_SIZE=500
     networks:
       - sentinelog-net
     restart: unless-stopped
@@ -145,8 +147,7 @@ services:
     container_name: sentinelog-frontend
     hostname: frontend
     depends_on:
-      backend-api:
-        condition: service_healthy
+      backend-api: { condition: service_healthy }
     ports:
       - "8080:80"
     networks:
@@ -158,10 +159,14 @@ services:
     image: python:3.12-slim
     container_name: sentinelog-kibana-init
     depends_on:
-      kibana:
-        condition: service_healthy
+      kibana: { condition: service_healthy }
     volumes:
       - ./kibana:/app
+    environment:
+      - KIBANA_URL=http://kibana:5601
+      - ES_URL=http://elasticsearch:9200
+      - ES_USER=elastic
+      - ES_PASSWORD=${ELASTIC_PASSWORD}
     command: python /app/init_kibana.py
     networks:
       - sentinelog-net
@@ -169,11 +174,8 @@ services:
 
 volumes:
   es-data:
-    driver: local
+  redis-data:
 
 networks:
   sentinelog-net:
     driver: bridge
-    ipam:
-      config:
-        - subnet: 192.168.100.0/24
